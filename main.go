@@ -16,19 +16,67 @@ import (
 )
 
 func main() {
-	kubeconfig := flag.String("kubeconfig", "/path/to/kubeconfig", "location of your kubeconfig file")
+	action := flag.String("action", "", "action to perform, createSnapshot or createPVCFromSnapshot or listSnapshot")
+	kubeconfig := flag.String("kubeconfig", "", "location of your kubeconfig file")
 	pvcName := flag.String("pvc", "", "name of the PVC")
 	snapshotName := flag.String("snapshot", "", "name of the snapshot")
 	flag.Parse()
 
-	fmt.Printf("Creating snapshot %s for PVC %s\n", *snapshotName, *pvcName)
-	config, _ := clientcmd.BuildConfigFromFlags("", *kubeconfig)
-	snapshotClient, _ := snapshotclientset.NewForConfig(config)
+	if !isValidAction(*action) {
+		log.Fatalf("Invalid action %s, action must be one of %v", *action, []string{"createSnapshot", "createPVCFromSnapshot", "listSnapshot"})
+	}
 
-	// Create a snapshot
+	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	if err != nil {
+		log.Fatalf("Error building kubeconfig %s, Error: %v", *kubeconfig, err)
+	}
+
+	if *action == "createSnapshot" {
+		fmt.Printf("Creating snapshot, pvcName: %s snapshotName: %s\n", *pvcName, *snapshotName)
+		snapshotClient, err := snapshotclientset.NewForConfig(config)
+		if err != nil {
+			log.Fatalf("Error creating snapshot client: %v", err)
+		}
+		snapshotName, err := createSnapshot(snapshotClient, pvcName, *snapshotName)
+		if err != nil {
+			log.Fatalf("Error creating snapshot: %v", err)
+		}
+		fmt.Printf("Created snapshot: %s\n", snapshotName)
+		return
+	}
+
+	if *action == "listSnapshot" {
+		fmt.Println("Listing snapshots")
+		snapshotClient, err := snapshotclientset.NewForConfig(config)
+		if err != nil {
+			log.Fatalf("Error creating snapshot client: %v", err)
+		}
+		snapshots, err := listSnapshot(snapshotClient)
+		if err != nil {
+			log.Fatalf("Error listing snapshots: %v", err)
+		}
+		for _, snapshot := range snapshots.Items {
+			fmt.Printf("Snapshot name: %s Source PVC: %s\n", snapshot.Name, *snapshot.Spec.Source.PersistentVolumeClaimName)
+		}
+		return
+	}
+
+	fmt.Printf("Creating PVC from snapshot: %s, pvcName: %s\n", *snapshotName, *pvcName)
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		log.Fatalf("Error creating clientset: %v", err)
+	}
+	createPVCFromSnapshot(clientset, *pvcName, "manual-snapshot")
+}
+
+func isValidAction(action string) bool {
+	return action == "createSnapshot" || action == "createPVCFromSnapshot" || action == "listSnapshot"
+}
+
+func createSnapshot(snapshotClient *snapshotclientset.Clientset, pvcName *string, snapshotName string) (string, error) {
 	snapshot := &snapshotsv1.VolumeSnapshot{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      *snapshotName,
+			Name:      snapshotName,
 			Namespace: "default",
 		},
 		Spec: snapshotsv1.VolumeSnapshotSpec{
@@ -40,14 +88,17 @@ func main() {
 
 	volumeSnapshot, err := snapshotClient.SnapshotV1().VolumeSnapshots("default").Create(context.TODO(), snapshot, metav1.CreateOptions{})
 	if err != nil {
-		log.Fatalf("Error creating snapshot: %v", err)
+		return "", fmt.Errorf("Error creating snapshot: %v", err)
 	}
-	fmt.Printf("Created snapshot: %s\n", volumeSnapshot.Name)
-	clientset, err := kubernetes.NewForConfig(config)
+	return volumeSnapshot.Name, nil
+}
+
+func listSnapshot(snapshotClient *snapshotclientset.Clientset) (*snapshotsv1.VolumeSnapshotList, error) {
+	snapshots, err := snapshotClient.SnapshotV1().VolumeSnapshots("default").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
-		log.Fatalf("Error creating clientset: %v", err)
+		return nil, fmt.Errorf("Error listing snapshots: %v", err)
 	}
-	createPVCFromSnapshot(clientset, "pvc-from-snapshot", "manual-snapshot")
+	return snapshots, nil
 }
 
 func createPVCFromSnapshot(clientset *kubernetes.Clientset, pvcName, storageClassName string) error {
