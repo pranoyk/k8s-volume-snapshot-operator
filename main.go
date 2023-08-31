@@ -62,7 +62,6 @@ func createSnapshot(snapshotClient *snapshotclientset.Clientset, pvcName *string
 	snapshot := &snapshotsv1.VolumeSnapshot{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      snapshotName,
-			Namespace: "default",
 		},
 		Spec: snapshotsv1.VolumeSnapshotSpec{
 			VolumeSnapshotClassName: snapshotClassName,
@@ -85,7 +84,6 @@ func createPVCFromSnapshot(clientset *kubernetes.Clientset, snapshotName, pvcNam
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pvcName,
-			Namespace: "default",
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			StorageClassName: &storageClassName,
